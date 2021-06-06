@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.distributions as td
+from torch.nn import Parameter
 from torchvision import datasets, transforms
 from torchvision.utils import make_grid
 from tqdm import tqdm, trange
@@ -84,6 +85,7 @@ class Gaussian(nn.Module):
         or learnt.
 
     """
+    rho: Parameter
 
     def __init__(self, mu, rho, device='cuda', fixed=False):
         super().__init__()
@@ -96,8 +98,21 @@ class Gaussian(nn.Module):
         # Computation of standard deviation:
         # We use rho instead of sigma so that sigma is always positive during
         # the optimisation. Specifically, we use sigma = log(exp(rho)+1)
-        m = nn.Softplus()
-        return m(self.rho)
+
+        # m = nn.Softplus()
+        # return m(self.rho)
+        self.rho: torch.Tensor
+        # return F.softplus(self.rho)   # still dame
+
+        return self.rho.where(self.rho >= 20, torch.log(torch.exp(self.rho)+1))
+
+        # well, when I try this first time, pytorch tells me that they cannot do auto_grad since inplace valued
+        # but when I changed back it turns out to be OK.
+        # if self.rho >= 20:
+        #     res = self.rho
+        # else:
+        #     res = torch.log(torch.exp(self.rho) + 1)
+        # return res
 
     def sample(self):
         # Return a sample from the Gaussian distribution
@@ -1100,7 +1115,7 @@ def trainNNet(net, optimizer, epoch, train_loader, device='cuda', verbose=False)
     # train and report training metrics
     net.train()
     total, correct, avgloss = 0.0, 0.0, 0.0
-    for batch_id, (data, target) in enumerate(tqdm(train_loader)):
+    for batch_id, (data, target) in enumerate(tqdm(train_loader, position=0)):
         data, target = data.to(device), target.to(device)
         net.zero_grad()
         output = net(data)
@@ -1197,7 +1212,7 @@ def trainPNNet(net, optimizer, pbobj, epoch, train_loader, lambda_var=None, opti
     else:
         clamping = True
 
-    for batch_id, (data, target) in enumerate(tqdm(train_loader)):
+    for batch_id, (data, target) in enumerate(tqdm(train_loader, position=0)):
         data, target = data.to(pbobj.device), target.to(pbobj.device)
         net.zero_grad()
         bound, kl, _, loss, err = pbobj.train_obj(
@@ -1253,7 +1268,7 @@ def testStochastic(net, test_loader, pbobj, device='cuda'):
     correct, cross_entropy, total = 0, 0.0, 0.0
     outputs = torch.zeros(test_loader.batch_size, pbobj.classes).to(device)
     with torch.no_grad():
-        for batch_id, (data, target) in enumerate(tqdm(test_loader)):
+        for batch_id, (data, target) in enumerate(tqdm(test_loader, position=0)):
             data, target = data.to(device), target.to(device)
             for i in range(len(data)):
                 outputs[i, :] = net(data[i:i+1], sample=True,
@@ -1325,7 +1340,7 @@ def testEnsemble(net, test_loader, pbobj, device='cuda', samples=100):
     net.eval()
     correct, cross_entropy, total = 0, 0.0, 0.0
     with torch.no_grad():
-        for batch_id, (data, target) in enumerate(tqdm(test_loader)):
+        for batch_id, (data, target) in enumerate(tqdm(test_loader, position=0)):
             data, target = data.to(device), target.to(device)
             outputs = torch.zeros(samples, test_loader.batch_size,
                                   pbobj.classes).to(device)
