@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.distributions as td
+from torch.nn import Parameter
 from torchvision import datasets, transforms
 from torchvision.utils import make_grid
 from tqdm import tqdm, trange
@@ -84,6 +85,7 @@ class Gaussian(nn.Module):
         or learnt.
 
     """
+    rho: Parameter
 
     def __init__(self, mu, rho, device='cuda', fixed=False):
         super().__init__()
@@ -96,8 +98,21 @@ class Gaussian(nn.Module):
         # Computation of standard deviation:
         # We use rho instead of sigma so that sigma is always positive during
         # the optimisation. Specifically, we use sigma = log(exp(rho)+1)
-        m = nn.Softplus()
-        return m(self.rho)
+
+        # m = nn.Softplus()
+        # return m(self.rho)
+        self.rho: torch.Tensor
+        # return F.softplus(self.rho)   # still dame
+
+        return self.rho.where(self.rho >= 20, torch.log(torch.exp(self.rho)+1))
+
+        # well, when I try this first time, pytorch tells me that they cannot do auto_grad since inplace valued
+        # but when I changed back it turns out to be OK.
+        # if self.rho >= 20:
+        #     res = self.rho
+        # else:
+        #     res = torch.log(torch.exp(self.rho) + 1)
+        # return res
 
     def sample(self):
         # Return a sample from the Gaussian distribution
@@ -117,6 +132,12 @@ class Gaussian(nn.Module):
         term3 = torch.div(b1, b0)
         kl_div = (torch.mul(term1 + term2 + term3 - 1, 0.5)).sum()
         return kl_div
+
+    def compute_kl_point(self, other, x):   # x is the sampled weight/bias
+        b1 = torch.pow(self.sigma, 2)
+        b0 = torch.pow(other.sigma, 2)
+
+        return torch.div(torch.pow(x-other.mu, 2), 2*b0) - torch.div(torch.pow(x-self.mu, 2), 2*b1)
 
 
 class Laplace(nn.Module):
@@ -305,6 +326,7 @@ class ProbLinear(nn.Module):
             bias_mu_init.clone(), bias_rho_init.clone(), device=device, fixed=True)
 
         self.kl_div = 0
+        self.kl_point = 0
 
     def forward(self, input, sample=False):
         if self.training or sample:
@@ -321,6 +343,8 @@ class ProbLinear(nn.Module):
             # sum of the KL computed for weights and biases
             self.kl_div = self.weight.compute_kl(self.weight_prior) + \
                 self.bias.compute_kl(self.bias_prior)
+            self.kl_point = self.weight.compute_kl_point(
+                self.weight_prior, weight) + self.bias.compute_kl_point(self.bias_prior, bias)
 
         return F.linear(input, weight, bias)
 
@@ -411,6 +435,7 @@ class ProbConv2d(nn.Module):
             bias_mu_init.clone(), bias_rho_init.clone(), device=device, fixed=True)
 
         self.kl_div = 0
+        self.kl_point = 0
 
     def forward(self, input, sample=False):
         if self.training or sample:
@@ -427,6 +452,8 @@ class ProbConv2d(nn.Module):
             # sum of the KL computed for weights and biases
             self.kl_div = self.weight.compute_kl(
                 self.weight_prior) + self.bias.compute_kl(self.bias_prior)
+            self.kl_point = self.weight.compute_kl_point(
+                self.weight_prior, weight) + self.bias.compute_kl_point(self.bias_prior, bias)
 
         return F.conv2d(input, weight, bias, self.stride, self.padding, self.dilation, self.groups)
 
@@ -550,6 +577,10 @@ class ProbNNet4l(nn.Module):
         # KL as a sum of the KL for each individual layer
         return self.l1.kl_div + self.l2.kl_div + self.l3.kl_div + self.l4.kl_div
 
+    def compute_kl_point(self):
+        # compute the term in the pointwise bound by sum for each layer
+        return self.l1.kl_point + self.l2.kl_point + self.l3.kl_point + self.l4.kl_point
+
 
 class ProbCNNet4l(nn.Module):
     """Implementation of a Probabilistic Convolutional Neural Network with 4 layers
@@ -600,6 +631,9 @@ class ProbCNNet4l(nn.Module):
         # KL as a sum of the KL for each individual layer
         return self.conv1.kl_div + self.conv2.kl_div + self.fc1.kl_div + self.fc2.kl_div
 
+    def compute_kl_point(self):
+        # compute the term in the pointwise bound by sum for each layer
+        return self.conv1.kl_point + self.conv2.kl_point + self.fc1.kl_point + self.fc2.kl_point
 
 class CNNet9l(nn.Module):
     """Implementation of a Convolutional Neural Network with 9 layers
@@ -726,6 +760,12 @@ class ProbCNNet9l(nn.Module):
     def compute_kl(self):
         # KL as a sum of the KL for each individual layer
         return self.conv1.kl_div + self.conv2.kl_div + self.conv3.kl_div + self.conv4.kl_div + self.conv5.kl_div + self.conv6.kl_div + self.fcl1.kl_div + self.fcl2.kl_div + self.fcl3.kl_div
+
+    def compute_kl_point(self):
+        # compute the term in the pointwise bound by sum for each layer
+        return self.conv1.kl_point + self.conv2.kl_point + self.conv3.kl_point + \
+               self.conv4.kl_point + self.conv5.kl_point + self.conv6.kl_point + \
+               self.fcl1.kl_point + self.fcl2.kl_point + self.fcl3.kl_point
 
 
 class CNNet13l(nn.Module):
@@ -873,6 +913,14 @@ class ProbCNNet13l(nn.Module):
     def compute_kl(self):
         # KL as a sum of the KL for each individual layer
         return self.conv1.kl_div + self.conv2.kl_div + self.conv3.kl_div + self.conv4.kl_div + self.conv5.kl_div + self.conv6.kl_div + self.conv7.kl_div + self.conv8.kl_div + self.conv9.kl_div + self.conv10.kl_div + self.fcl1.kl_div + self.fcl2.kl_div + self.fcl3.kl_div
+
+    def compute_kl_point(self):
+        # KL as a sum of the KL for each individual layer
+        return self.conv1.kl_point + self.conv2.kl_point + self.conv3.kl_point + \
+               self.conv4.kl_point + self.conv5.kl_point + self.conv6.kl_point + \
+               self.conv7.kl_point + self.conv8.kl_point + self.conv9.kl_point + \
+               self.conv10.kl_point + self.fcl1.kl_point + \
+               self.fcl2.kl_point + self.fcl3.kl_point
 
 
 class CNNet15l(nn.Module):
@@ -1050,6 +1098,14 @@ class ProbCNNet15l(nn.Module):
         + self.conv11.kl_div + self.conv12.kl_div + \
             self.fcl1.kl_div + self.fcl2.kl_div + self.fcl3.kl_div
 
+    def compute_kl_point(self):
+        # KL as a sum of the KL for each individual layer
+        return self.conv1.kl_point + self.conv2.kl_point + self.conv3.kl_point + self.conv4.kl_point + self.conv5.kl_point
+        + self.conv6.kl_point + self.conv7.kl_point + \
+            self.conv8.kl_point + self.conv9.kl_point + self.conv10.kl_point
+        + self.conv11.kl_point + self.conv12.kl_point + \
+            self.fcl1.kl_point + self.fcl2.kl_point + self.fcl3.kl_point
+
 
 def output_transform(x, clamping=True, pmin=1e-4):
     """Computes the log softmax and clamps the values using the
@@ -1100,7 +1156,7 @@ def trainNNet(net, optimizer, epoch, train_loader, device='cuda', verbose=False)
     # train and report training metrics
     net.train()
     total, correct, avgloss = 0.0, 0.0, 0.0
-    for batch_id, (data, target) in enumerate(tqdm(train_loader)):
+    for batch_id, (data, target) in enumerate(tqdm(train_loader, position=0)):
         data, target = data.to(device), target.to(device)
         net.zero_grad()
         output = net(data)
@@ -1197,7 +1253,7 @@ def trainPNNet(net, optimizer, pbobj, epoch, train_loader, lambda_var=None, opti
     else:
         clamping = True
 
-    for batch_id, (data, target) in enumerate(tqdm(train_loader)):
+    for batch_id, (data, target) in enumerate(tqdm(train_loader, position=0)):
         data, target = data.to(pbobj.device), target.to(pbobj.device)
         net.zero_grad()
         bound, kl, _, loss, err = pbobj.train_obj(
@@ -1253,7 +1309,7 @@ def testStochastic(net, test_loader, pbobj, device='cuda'):
     correct, cross_entropy, total = 0, 0.0, 0.0
     outputs = torch.zeros(test_loader.batch_size, pbobj.classes).to(device)
     with torch.no_grad():
-        for batch_id, (data, target) in enumerate(tqdm(test_loader)):
+        for batch_id, (data, target) in enumerate(tqdm(test_loader, position=0)):
             data, target = data.to(device), target.to(device)
             for i in range(len(data)):
                 outputs[i, :] = net(data[i:i+1], sample=True,
@@ -1325,7 +1381,7 @@ def testEnsemble(net, test_loader, pbobj, device='cuda', samples=100):
     net.eval()
     correct, cross_entropy, total = 0, 0.0, 0.0
     with torch.no_grad():
-        for batch_id, (data, target) in enumerate(tqdm(test_loader)):
+        for batch_id, (data, target) in enumerate(tqdm(test_loader, position=0)):
             data, target = data.to(device), target.to(device)
             outputs = torch.zeros(samples, test_loader.batch_size,
                                   pbobj.classes).to(device)

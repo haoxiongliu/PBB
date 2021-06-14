@@ -2,7 +2,7 @@ import math
 import numpy as np
 import torch
 import torch.distributions as td
-from tqdm import tqdm, trange
+from tqdm.auto import tqdm, trange
 import torch.nn.functional as F
 
 
@@ -14,6 +14,7 @@ class PBBobj():
     ----------
     objective : string
         training objective to be optimised (choices are fquad, flamb, fclassic or fbbb)
+        modified by haoxiong liu: add pointwise classic bound fpoint
     
     pmin : float
         minimum probability to clamp to have a loss in [0,1]
@@ -60,10 +61,10 @@ class PBBobj():
             empirical_risk = (1./(np.log(1./self.pmin))) * empirical_risk
         return empirical_risk
 
-    def compute_losses(self, net, data, target, clamping=True):
+    def compute_losses(self, net, data, target, clamping=True, sample=True):
         # compute both cross entropy and 01 loss
         # returns outputs of the network as well
-        outputs = net(data, sample=True,
+        outputs = net(data, sample=sample,
                       clamping=clamping, pmin=self.pmin)
         loss_ce = self.compute_empirical_risk(
             outputs, target, clamping)
@@ -91,7 +92,7 @@ class PBBobj():
                 kl + np.log((2*np.sqrt(self.train_size)) / self.delta), self.train_size*lamb*(1 - lamb/2))
             first_term = torch.div(empirical_risk, 1 - lamb/2)
             train_obj = first_term + kl_term
-        elif self.objective == 'fclassic':
+        elif self.objective == 'fclassic' or self.objective == 'fpoint':
             kl = kl * self.kl_penalty
             kl_ratio = torch.div(
                 kl + np.log((2*np.sqrt(self.train_size))/self.delta), 2*self.train_size)
@@ -104,12 +105,32 @@ class PBBobj():
             raise RuntimeError(f'Wrong objective {self.objective}')
         return train_obj
 
+    def empirical_risk_center(self, net, input, target, batches=True, clamping=True, data_loader=None):
+        # compute both cross entropy and 01 loss
+        # returns outputs of the network as well
+        loss_ce = loss_01 = 0
+        if batches:
+            for batch_id, (data_batch, target_batch) in enumerate(tqdm(data_loader, position=0)):
+                data_batch, target_batch = data_batch.to(
+                    self.device), target_batch.to(self.device)
+                cross_entropy, error, _ = self.compute_losses(net,
+                                                          data_batch, target_batch, clamping, sample=False)
+                loss_ce += cross_entropy
+                loss_01 += error
+            # we average cross-entropy and 0-1 error over all batches
+            loss_ce /= batch_id
+            loss_01 /= batch_id
+        else:
+            loss_ce, loss_01, _ = self.compute_losses(net, input, target, clamping, sample=False)
+        return loss_ce, loss_01
+
+
     def mcsampling(self, net, input, target, batches=True, clamping=True, data_loader=None):
         # compute empirical risk with Monte Carlo sampling
         error = 0.0
         cross_entropy = 0.0
         if batches:
-            for batch_id, (data_batch, target_batch) in enumerate(tqdm(data_loader)):
+            for batch_id, (data_batch, target_batch) in enumerate(tqdm(data_loader, position=0)):
                 data_batch, target_batch = data_batch.to(
                     self.device), target_batch.to(self.device)
                 cross_entropy_mc = 0.0
@@ -141,27 +162,37 @@ class PBBobj():
     def train_obj(self, net, input, target, clamping=True, lambda_var=None):
         # compute train objective and return all metrics
         outputs = torch.zeros(target.size(0), self.classes).to(self.device)
-        kl = net.compute_kl()
+        if self.objective is not 'fpoint':
+            kl = net.compute_kl()
+        else:
+            kl = net.compute_kl_point()
         loss_ce, loss_01, outputs = self.compute_losses(net,
                                                         input, target, clamping)
-
         train_obj = self.bound(loss_ce, kl, lambda_var)
         return train_obj, kl/self.train_size, outputs, loss_ce, loss_01
 
     def compute_final_stats_risk(self, net, input=None, target=None, data_loader=None, clamping=True, lambda_var=None):
         # compute all final stats and risk certificates
         kl = net.compute_kl()
-        if data_loader:
-            error_ce, error_01 = self.mcsampling(net, input, target, batches=True,
-                                                 clamping=True, data_loader=data_loader)
-        else:
-            error_ce, error_01 = self.mcsampling(net, input, target, batches=False,
-                                                 clamping=True)
 
-        empirical_risk_ce = inv_kl(
-            error_ce.item(), np.log(2/self.delta_test)/self.mc_samples)
-        empirical_risk_01 = inv_kl(
-            error_01, np.log(2/self.delta_test)/self.mc_samples)
+        if self.objective is 'fpoint':
+            if data_loader:
+                empirical_risk_ce, empirical_risk_01 = \
+                    self.empirical_risk_center(net, input, target, batches=True, clamping=True, data_loader=data_loader)
+            else:
+                empirical_risk_ce, empirical_risk_01 = \
+                    self.empirical_risk_center(net, input, target, batches=False, clamping=True)
+        else:
+            if data_loader:
+                error_ce, error_01 = self.mcsampling(net, input, target, batches=True,
+                                                     clamping=True, data_loader=data_loader)
+            else:
+                error_ce, error_01 = self.mcsampling(net, input, target, batches=False,
+                                                     clamping=True)
+            empirical_risk_ce = inv_kl(
+                error_ce.item(), np.log(2/self.delta_test)/self.mc_samples)
+            empirical_risk_01 = inv_kl(
+                error_01, np.log(2/self.delta_test)/self.mc_samples)
 
         train_obj = self.bound(empirical_risk_ce, kl, lambda_var)
 

@@ -7,7 +7,7 @@ import torch.optim as optim
 import torch.distributions as td
 from torchvision import datasets, transforms
 from torchvision.utils import make_grid
-from tqdm import tqdm, trange
+from tqdm.auto import tqdm, trange
 from pbb.models import NNet4l, CNNet4l, ProbNNet4l, ProbCNNet4l, ProbCNNet9l, CNNet9l, CNNet13l, ProbCNNet13l, ProbCNNet15l, CNNet15l, trainNNet, testNNet, Lambda_var, trainPNNet, computeRiskCertificates, testPosteriorMean, testStochastic, testEnsemble
 from pbb.bounds import PBBobj
 from pbb import data
@@ -188,6 +188,8 @@ perc_prior=0.2, batch_size=250):
     else:
         raise RuntimeError(f'Architecture {model} not supported')
 
+    if objective is 'fpoint':
+        mc_samples = 1
     bound = PBBobj(objective, pmin, classes, train_size, delta,
                     delta_test, mc_samples, kl_penalty, device)
 
