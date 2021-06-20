@@ -10,7 +10,7 @@ from torchvision.utils import make_grid
 from tqdm.auto import tqdm, trange
 from pbb.models import NNet4l, CNNet4l, ProbNNet4l, ProbCNNet4l, ProbCNNet9l, CNNet9l, CNNet13l, ProbCNNet13l, ProbCNNet15l, CNNet15l, trainNNet, testNNet, Lambda_var, trainPNNet, computeRiskCertificates, testPosteriorMean, testStochastic, testEnsemble
 from pbb.bounds import PBBobj
-from pbb import data
+from pbb.data import *
 
 def runexp(name_data, objective, prior_type, model, sigma_prior, pmin, learning_rate, momentum, 
 learning_rate_prior=0.01, momentum_prior=0.95, delta=0.025, layers=9, delta_test=0.01, mc_samples=1000, 
@@ -120,7 +120,7 @@ perc_prior=0.2, batch_size=250):
     loader_kargs = {'num_workers': 1,
                     'pin_memory': True} if torch.cuda.is_available() else {}
 
-    train, test = data.loaddataset(name_data)
+    train, test = loaddataset(name_data)
     rho_prior = math.log(math.exp(sigma_prior)-1.0)
 
     if prior_type == 'rand':
@@ -145,11 +145,11 @@ perc_prior=0.2, batch_size=250):
         net0 = NNet4l(dropout_prob=dropout_prob, device=device).to(device)
 
     if prior_type == 'rand':
-        train_loader, test_loader, _, val_bound_one_batch, _, val_bound = data.loadbatches(
+        train_loader, test_loader, _, val_bound_one_batch, _, val_bound = loadbatches(
             train, test, loader_kargs, batch_size, prior=False, perc_train=perc_train, perc_prior=perc_prior)
         errornet0 = testNNet(net0, test_loader, device=device)
     elif prior_type == 'learnt':
-        train_loader, test_loader, valid_loader, val_bound_one_batch, _, val_bound = data.loadbatches(
+        train_loader, test_loader, valid_loader, val_bound_one_batch, _, val_bound = loadbatches(
             train, test, loader_kargs, batch_size, prior=True, perc_train=perc_train, perc_prior=perc_prior)
         optimizer = optim.SGD(
             net0.parameters(), lr=learning_rate_prior, momentum=momentum_prior)
@@ -163,7 +163,7 @@ perc_prior=0.2, batch_size=250):
     classes = len(train_loader.dataset.classes)
 
     if model == 'cnn':
-        toolarge = True
+        # toolarge = True
         if name_data == 'cifar10':
             if layers == 9:
                 net = ProbCNNet9l(rho_prior, prior_dist=prior_dist,
@@ -202,6 +202,23 @@ perc_prior=0.2, batch_size=250):
 
     optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=momentum)
 
+    # if objective is 'fpoint':
+    #     for epoch in trange(train_epochs):
+    #         trainPNNet(net, optimizer, bound, epoch, train_loader, lambda_var, optimizer_lambda, verbose)
+    #     # for pointwise, first sample the parameter, then estimate
+    #     net.eval()
+    #     with torch.no_grad():
+    #         if toolarge:
+    #             train_obj, kl, loss_ce_train, err_01_train, risk_ce, risk_01 = bound.compute_final_stats_risk(
+    #                 net, lambda_var=lambda_var, clamping=True, data_loader=train_loader)
+    #         else:
+    #             # a bit hacky, we load the whole dataset to compute the bound
+    #             for data, target in val_bound_one_batch:
+    #                 data, target = data.to(device), target.to(device)
+    #                 train_obj, kl, loss_ce_train, err_01_train, risk_ce, risk_01 = bound.compute_final_stats_risk(
+    #                     net, lambda_var=lambda_var, clamping=True, input=data, target=target)
+    # else:
+    # first test the wrong version, the bound and the classifier is not the same one since the code is difficult fo modify
     for epoch in trange(train_epochs):
         trainPNNet(net, optimizer, bound, epoch, train_loader, lambda_var, optimizer_lambda, verbose)
         if verbose_test and ((epoch+1) % 5 == 0):
@@ -209,10 +226,12 @@ perc_prior=0.2, batch_size=250):
             bound, device=device, lambda_var=lambda_var, train_loader=val_bound, whole_train=val_bound_one_batch)
 
             stch_loss, stch_err = testStochastic(net, test_loader, bound, device=device)
-            post_loss, post_err = testPosteriorMean(net, test_loader, bound, device=device)
-            ens_loss, ens_err = testEnsemble(net, test_loader, bound, device=device, samples=samples_ensemble)
+            post_loss, post_err = -1, -1
+            ens_loss, ens_err = -1, -1
+            # post_loss, post_err = testPosteriorMean(net, test_loader, bound, device=device)
+            # ens_loss, ens_err = testEnsemble(net, test_loader, bound, device=device, samples=samples_ensemble)
 
-            print(f"***Checkpoint results***")         
+            print(f"***Checkpoint results***")
             print(f"Objective, Dataset, Sigma, pmin, LR, momentum, LR_prior, momentum_prior, kl_penalty, dropout, Obj_train, Risk_CE, Risk_01, KL, Train NLL loss, Train 01 error, Stch loss, Stch 01 error, Post mean loss, Post mean 01 error, Ens loss, Ens 01 error, 01 error prior net, perc_train, perc_prior")
             print(f"{objective}, {name_data}, {sigma_prior :.5f}, {pmin :.5f}, {learning_rate :.5f}, {momentum :.5f}, {learning_rate_prior :.5f}, {momentum_prior :.5f}, {kl_penalty : .5f}, {dropout_prob :.5f}, {train_obj :.5f}, {risk_ce :.5f}, {risk_01 :.5f}, {kl :.5f}, {loss_ce_train :.5f}, {loss_01_train :.5f}, {stch_loss :.5f}, {stch_err :.5f}, {post_loss :.5f}, {post_err :.5f}, {ens_loss :.5f}, {ens_err :.5f}, {errornet0 :.5f}, {perc_train :.5f}, {perc_prior :.5f}")
 
@@ -220,10 +239,12 @@ perc_prior=0.2, batch_size=250):
     lambda_var=lambda_var, train_loader=val_bound, whole_train=val_bound_one_batch)
 
     stch_loss, stch_err = testStochastic(net, test_loader, bound, device=device)
-    post_loss, post_err = testPosteriorMean(net, test_loader, bound, device=device)
-    ens_loss, ens_err = testEnsemble(net, test_loader, bound, device=device, samples=samples_ensemble)
+    # post_loss, post_err = testPosteriorMean(net, test_loader, bound, device=device)
+    # ens_loss, ens_err = testEnsemble(net, test_loader, bound, device=device, samples=samples_ensemble)
+    post_loss, post_err = -1, -1
+    ens_loss, ens_err = -1, -1
 
-    print(f"***Final results***") 
+    print(f"***Final results***")
     print(f"Objective, Dataset, Sigma, pmin, LR, momentum, LR_prior, momentum_prior, kl_penalty, dropout, Obj_train, Risk_CE, Risk_01, KL, Train NLL loss, Train 01 error, Stch loss, Stch 01 error, Post mean loss, Post mean 01 error, Ens loss, Ens 01 error, 01 error prior net, perc_train, perc_prior")
     print(f"{objective}, {name_data}, {sigma_prior :.5f}, {pmin :.5f}, {learning_rate :.5f}, {momentum :.5f}, {learning_rate_prior :.5f}, {momentum_prior :.5f}, {kl_penalty : .5f}, {dropout_prob :.5f}, {train_obj :.5f}, {risk_ce :.5f}, {risk_01 :.5f}, {kl :.5f}, {loss_ce_train :.5f}, {loss_01_train :.5f}, {stch_loss :.5f}, {stch_err :.5f}, {post_loss :.5f}, {post_err :.5f}, {ens_loss :.5f}, {ens_err :.5f}, {errornet0 :.5f}, {perc_train :.5f}, {perc_prior :.5f}")
 

@@ -29,9 +29,7 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
         >>> nn.init.trunc_normal_(w)
     """
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
-    
-    
-   
+
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
     # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf
     def norm_cdf(x):
@@ -116,8 +114,9 @@ class Gaussian(nn.Module):
 
     def sample(self):
         # Return a sample from the Gaussian distribution
-        epsilon = torch.randn(self.sigma.size()).to(self.device)
+        epsilon = torch.randn(self.sigma.size(), requires_grad=False).to(self.device)
         return self.mu + self.sigma * epsilon
+
 
     def compute_kl(self, other):
         # Compute KL divergence between two Gaussians (self and other)
@@ -136,8 +135,8 @@ class Gaussian(nn.Module):
     def compute_kl_point(self, other, x):   # x is the sampled weight/bias
         b1 = torch.pow(self.sigma, 2)
         b0 = torch.pow(other.sigma, 2)
-
-        return torch.div(torch.pow(x-other.mu, 2), 2*b0) - torch.div(torch.pow(x-self.mu, 2), 2*b1)
+        term3 = 0.5*(torch.log(torch.div(b0, b1)))
+        return (torch.div(torch.pow(x-other.mu, 2), 2*b0) - torch.div(torch.pow(x-self.mu, 2), 2*b1) + term3).sum()
 
 
 class Laplace(nn.Module):
@@ -328,6 +327,11 @@ class ProbLinear(nn.Module):
         self.kl_div = 0
         self.kl_point = 0
 
+    def sample(self):
+        weight = self.weight.sample()
+        bias = self.bias.sample()
+        return weight, bias
+
     def forward(self, input, sample=False):
         if self.training or sample:
             # during training we sample from the model distribution
@@ -344,7 +348,8 @@ class ProbLinear(nn.Module):
             self.kl_div = self.weight.compute_kl(self.weight_prior) + \
                 self.bias.compute_kl(self.bias_prior)
             self.kl_point = self.weight.compute_kl_point(
-                self.weight_prior, weight) + self.bias.compute_kl_point(self.bias_prior, bias)
+                self.weight_prior, weight) + \
+                self.bias.compute_kl_point(self.bias_prior, bias)
 
         return F.linear(input, weight, bias)
 
@@ -436,6 +441,11 @@ class ProbConv2d(nn.Module):
 
         self.kl_div = 0
         self.kl_point = 0
+
+    def sample(self):
+        weight = self.weight.sample()
+        bias = self.bias.sample()
+        return weight, bias
 
     def forward(self, input, sample=False):
         if self.training or sample:
@@ -635,6 +645,7 @@ class ProbCNNet4l(nn.Module):
         # compute the term in the pointwise bound by sum for each layer
         return self.conv1.kl_point + self.conv2.kl_point + self.fc1.kl_point + self.fc2.kl_point
 
+
 class CNNet9l(nn.Module):
     """Implementation of a Convolutional Neural Network with 9 layers
     (used for the experiments on CIFAR-10 so it assumes a specific input size,
@@ -780,7 +791,7 @@ class CNNet13l(nn.Module):
 
     """
 
-    def __init__(self, dropout_prob):
+    def __init__(self, dropout_prob, init_net=None):
         super().__init__()
         self.conv1 = nn.Conv2d(
             in_channels=3, out_channels=32, kernel_size=3, padding=1)
@@ -1019,7 +1030,6 @@ class ProbCNNet15l(nn.Module):
 
     def __init__(self, rho_prior, prior_dist, device='cuda', init_net=None):
         super().__init__()
-        # TODO
         self.conv1 = ProbConv2d(
             in_channels=3, out_channels=32, rho_prior=rho_prior, prior_dist=prior_dist, device=device,
             kernel_size=3, padding=1, init_layer=init_net.conv1 if init_net else None)
@@ -1092,18 +1102,14 @@ class ProbCNNet15l(nn.Module):
 
     def compute_kl(self):
         # KL as a sum of the KL for each individual layer
-        return self.conv1.kl_div + self.conv2.kl_div + self.conv3.kl_div + self.conv4.kl_div + self.conv5.kl_div
-        + self.conv6.kl_div + self.conv7.kl_div + \
-            self.conv8.kl_div + self.conv9.kl_div + self.conv10.kl_div
-        + self.conv11.kl_div + self.conv12.kl_div + \
+        return self.conv1.kl_div + self.conv2.kl_div + self.conv3.kl_div + self.conv4.kl_div + self.conv5.kl_div + self.conv6.kl_div + self.conv7.kl_div + \
+            self.conv8.kl_div + self.conv9.kl_div + self.conv10.kl_div + self.conv11.kl_div + self.conv12.kl_div + \
             self.fcl1.kl_div + self.fcl2.kl_div + self.fcl3.kl_div
 
     def compute_kl_point(self):
         # KL as a sum of the KL for each individual layer
-        return self.conv1.kl_point + self.conv2.kl_point + self.conv3.kl_point + self.conv4.kl_point + self.conv5.kl_point
-        + self.conv6.kl_point + self.conv7.kl_point + \
-            self.conv8.kl_point + self.conv9.kl_point + self.conv10.kl_point
-        + self.conv11.kl_point + self.conv12.kl_point + \
+        return self.conv1.kl_point + self.conv2.kl_point + self.conv3.kl_point + self.conv4.kl_point + self.conv5.kl_point + self.conv6.kl_point + self.conv7.kl_point + \
+            self.conv8.kl_point + self.conv9.kl_point + self.conv10.kl_point + self.conv11.kl_point + self.conv12.kl_point + \
             self.fcl1.kl_point + self.fcl2.kl_point + self.fcl3.kl_point
 
 
@@ -1129,7 +1135,7 @@ def output_transform(x, clamping=True, pmin=1e-4):
     return output
 
 
-def trainNNet(net, optimizer, epoch, train_loader, device='cuda', verbose=False):
+def trainNNet(net: nn.Module, optimizer, epoch, train_loader, device='cuda', verbose=False):
     """Train function for a standard NN (including CNN)
 
     Parameters
@@ -1258,7 +1264,7 @@ def trainPNNet(net, optimizer, pbobj, epoch, train_loader, lambda_var=None, opti
         net.zero_grad()
         bound, kl, _, loss, err = pbobj.train_obj(
             net, data, target, lambda_var=lambda_var, clamping=clamping)
-        bound.backward()
+        bound.backward(retain_graph=True)
         optimizer.step()
         avgbound += bound.item()
         avgkl += kl
@@ -1305,23 +1311,40 @@ def testStochastic(net, test_loader, pbobj, device='cuda'):
 
     """
     # compute mean test accuracy
-    net.eval()
-    correct, cross_entropy, total = 0, 0.0, 0.0
-    outputs = torch.zeros(test_loader.batch_size, pbobj.classes).to(device)
-    with torch.no_grad():
-        for batch_id, (data, target) in enumerate(tqdm(test_loader, position=0)):
-            data, target = data.to(device), target.to(device)
-            for i in range(len(data)):
-                outputs[i, :] = net(data[i:i+1], sample=True,
-                                    clamping=True, pmin=pbobj.pmin)
-            cross_entropy += pbobj.compute_empirical_risk(
-                outputs, target, bounded=True)
-            pred = outputs.max(1, keepdim=True)[1]
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            total += target.size(0)
+    print("test stochastic")
 
-    return cross_entropy/batch_id, 1-(correct/total)
+    return pbobj.empirical_risk_sample(net, data_loader=test_loader)
+    #
+    # net.eval()
+    # loss_ce, loss_01 = 0, 0
+    # with torch.no_grad():
+    #     for batch_id, (data_batch, target_batch) in enumerate(tqdm(test_loader, position=0)):
+    #         data_batch, target_batch = data_batch.to(
+    #             pbobj.device), target_batch.to(pbobj.device)
+    #         cross_entropy, error, _ = pbobj.compute_losses(net,
+    #                                                        data_batch, target_batch, clamping=True, sample=True)
+    #         loss_ce += cross_entropy
+    #         loss_01 += error
+    #     # we average cross-entropy and 0-1 error over all batches
+    #     loss_ce /= batch_id
+    #     loss_01 /= batch_id
+    # return loss_ce, loss_01
 
+    # net.eval()
+    # correct, cross_entropy, total = 0, 0.0, 0.0
+    # outputs = torch.zeros(test_loader.batch_size, pbobj.classes).to(device)
+    # with torch.no_grad():
+    #     for batch_id, (data, target) in enumerate(tqdm(test_loader, position=0)):
+    #         data, target = data.to(device), target.to(device)
+    #         for i in range(len(data)):
+    #             outputs[i, :] = net(data[i:i+1], sample=True,
+    #                                 clamping=True, pmin=pbobj.pmin)
+    #         cross_entropy += pbobj.compute_empirical_risk(
+    #             outputs, target, bounded=True)
+    #         pred = outputs.max(1, keepdim=True)[1]
+    #         correct += pred.eq(target.view_as(pred)).sum().item()
+    #         total += target.size(0)
+    # return cross_entropy/batch_id, 1-(correct/total)
 
 def testPosteriorMean(net, test_loader, pbobj, device='cuda'):
     """Test function for the deterministic predictor using a PNN
@@ -1342,19 +1365,21 @@ def testPosteriorMean(net, test_loader, pbobj, device='cuda'):
         Device the code will run in (e.g. 'cuda')
 
     """
-    net.eval()
-    correct, total = 0, 0.0
-    with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            outputs = net(data, sample=False, clamping=True, pmin=pbobj.pmin)
-            cross_entropy = pbobj.compute_empirical_risk(
-                outputs, target, bounded=True)
-            pred = outputs.max(1, keepdim=True)[1]
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            total += target.size(0)
-
-    return cross_entropy, 1-(correct/total)
+    return pbobj.empirical_risk_sample(net, data_loader=test_loader, sample=False)
+    # net.eval()
+    # correct, total = 0, 0.0
+    # print("test posterior mean:")
+    # with torch.no_grad():
+    #     for data, target in test_loader:
+    #         data, target = data.to(device), target.to(device)
+    #         outputs = net(data, sample=False, clamping=True, pmin=pbobj.pmin)
+    #         cross_entropy = pbobj.compute_empirical_risk(
+    #             outputs, target, bounded=True)
+    #         pred = outputs.max(1, keepdim=True)[1]
+    #         correct += pred.eq(target.view_as(pred)).sum().item()
+    #         total += target.size(0)
+    #
+    # return cross_entropy, 1-(correct/total)
 
 
 def testEnsemble(net, test_loader, pbobj, device='cuda', samples=100):
