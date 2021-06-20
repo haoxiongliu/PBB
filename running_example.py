@@ -36,5 +36,5 @@ if __name__ == '__main__':
 
     # new point-wise bound update
     runexp('cifar10', 'fpoint', 'learnt', 'cnn', SIGMAPRIOR, PMIN, LEARNING_RATE, MOMENTUM, LEARNING_RATE_PRIOR, MOMENTUM_PRIOR,
-           delta=DELTA, delta_test=DELTA_TEST, mc_samples=MC_SAMPLES, train_epochs=1, device=DEVICE,
-           prior_epochs=1, perc_train=1.0, perc_prior=0.7, verbose=False, dropout_prob=0.2, layers=9)
+           delta=DELTA, delta_test=DELTA_TEST, mc_samples=MC_SAMPLES, train_epochs=10, device=DEVICE,
+           prior_epochs=70, perc_train=1.0, perc_prior=0.7, verbose=False, dropout_prob=0.2, layers=9)

@@ -62,7 +62,7 @@ class PBBobj():
         return empirical_risk
 
     def compute_losses(self, net, data, target, clamping=True, sample=True):
-        # compute both cross entropy and 01 loss
+        # compute both cross entropy and 01 loss, within a batch
         # returns outputs of the network as well
         outputs = net(data, sample=sample,
                       clamping=clamping, pmin=self.pmin)
@@ -109,19 +109,20 @@ class PBBobj():
         # compute both cross entropy and 01 loss
         # returns outputs of the network as well
         loss_ce = loss_01 = 0
-        if batches:
-            for batch_id, (data_batch, target_batch) in enumerate(tqdm(data_loader, position=0)):
-                data_batch, target_batch = data_batch.to(
-                    self.device), target_batch.to(self.device)
-                cross_entropy, error, _ = self.compute_losses(net,
-                                                          data_batch, target_batch, clamping, sample=sample)
-                loss_ce += cross_entropy
-                loss_01 += error
-            # we average cross-entropy and 0-1 error over all batches
-            loss_ce /= batch_id
-            loss_01 /= batch_id
-        else:
-            loss_ce, loss_01, _ = self.compute_losses(net, input, target, clamping, sample=True)
+        with torch.no_grad():
+            if batches:
+                for batch_id, (data_batch, target_batch) in enumerate(tqdm(data_loader, position=0)):
+                    data_batch, target_batch = data_batch.to(
+                        self.device), target_batch.to(self.device)
+                    cross_entropy, error, _ = self.compute_losses(net,
+                                                              data_batch, target_batch, clamping, sample=sample)
+                    loss_ce += cross_entropy
+                    loss_01 += error
+                # we average cross-entropy and 0-1 error over all batches
+                loss_ce /= batch_id
+                loss_01 /= batch_id
+            else:
+                loss_ce, loss_01, _ = self.compute_losses(net, input, target, clamping, sample=True)
         return loss_ce, loss_01
 
 
@@ -173,9 +174,8 @@ class PBBobj():
 
     def compute_final_stats_risk(self, net, input=None, target=None, data_loader=None, clamping=True, lambda_var=None):
         # compute all final stats and risk certificates
-        kl = net.compute_kl()
-
         if self.objective is 'fpoint':
+            kl = net.compute_kl_point()
             if data_loader:
                 empirical_risk_ce, empirical_risk_01 = \
                     self.empirical_risk_sample(net, input, target, batches=True, clamping=True, data_loader=data_loader)
@@ -183,6 +183,7 @@ class PBBobj():
                 empirical_risk_ce, empirical_risk_01 = \
                     self.empirical_risk_sample(net, input, target, batches=False, clamping=True)
         else:
+            kl = net.compute_kl()
             if data_loader:
                 error_ce, error_01 = self.mcsampling(net, input, target, batches=True,
                                                      clamping=True, data_loader=data_loader)

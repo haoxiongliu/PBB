@@ -8,7 +8,8 @@ import torch.distributions as td
 from torchvision import datasets, transforms
 from torchvision.utils import make_grid
 from tqdm.auto import tqdm, trange
-from pbb.models import NNet4l, CNNet4l, ProbNNet4l, ProbCNNet4l, ProbCNNet9l, CNNet9l, CNNet13l, ProbCNNet13l, ProbCNNet15l, CNNet15l, trainNNet, testNNet, Lambda_var, trainPNNet, computeRiskCertificates, testPosteriorMean, testStochastic, testEnsemble
+from pbb.models import NNet4l, CNNet4l, ProbNNet4l, ProbCNNet4l, ProbCNNet9l, CNNet9l, CNNet13l, ProbCNNet13l, ProbCNNet15l, CNNet15l, trainNNet, testNNet, Lambda_var, trainPNNet, pointTestCertificate, computeRiskCertificates, testPosteriorMean, testStochastic, testEnsemble
+# from pbb.models import *
 from pbb.bounds import PBBobj
 from pbb.data import *
 
@@ -221,32 +222,33 @@ perc_prior=0.2, batch_size=250):
     # first test the wrong version, the bound and the classifier is not the same one since the code is difficult fo modify
     for epoch in trange(train_epochs):
         trainPNNet(net, optimizer, bound, epoch, train_loader, lambda_var, optimizer_lambda, verbose)
-        if verbose_test and ((epoch+1) % 5 == 0):
-            train_obj, risk_ce, risk_01, kl, loss_ce_train, loss_01_train = computeRiskCertificates(net, toolarge,
-            bound, device=device, lambda_var=lambda_var, train_loader=val_bound, whole_train=val_bound_one_batch)
+        # if verbose_test and ((epoch+1) % 5 == 0):
+        #     train_obj, risk_ce, risk_01, kl, loss_ce_train, loss_01_train = computeRiskCertificates(net, toolarge,
+        #     bound, device=device, lambda_var=lambda_var, train_loader=val_bound, whole_train=val_bound_one_batch)
+        #
+        #     stch_loss, stch_err = testStochastic(net, test_loader, bound, device=device)
+        #     post_loss, post_err = -1, -1
+        #     ens_loss, ens_err = -1, -1
+        #     # post_loss, post_err = testPosteriorMean(net, test_loader, bound, device=device)
+        #     # ens_loss, ens_err = testEnsemble(net, test_loader, bound, device=device, samples=samples_ensemble)
+        #
+        #     print(f"***Checkpoint results***")
+        #     print(f"Objective, Dataset, Sigma, pmin, LR, momentum, LR_prior, momentum_prior, kl_penalty, dropout, Obj_train, Risk_CE, Risk_01, KL, Train NLL loss, Train 01 error, Stch loss, Stch 01 error, Post mean loss, Post mean 01 error, Ens loss, Ens 01 error, 01 error prior net, perc_train, perc_prior")
+        #     print(f"{objective}, {name_data}, {sigma_prior :.5f}, {pmin :.5f}, {learning_rate :.5f}, {momentum :.5f}, {learning_rate_prior :.5f}, {momentum_prior :.5f}, {kl_penalty : .5f}, {dropout_prob :.5f}, {train_obj :.5f}, {risk_ce :.5f}, {risk_01 :.5f}, {kl :.5f}, {loss_ce_train :.5f}, {loss_01_train :.5f}, {stch_loss :.5f}, {stch_err :.5f}, {post_loss :.5f}, {post_err :.5f}, {ens_loss :.5f}, {ens_err :.5f}, {errornet0 :.5f}, {perc_train :.5f}, {perc_prior :.5f}")
 
-            stch_loss, stch_err = testStochastic(net, test_loader, bound, device=device)
-            post_loss, post_err = -1, -1
-            ens_loss, ens_err = -1, -1
-            # post_loss, post_err = testPosteriorMean(net, test_loader, bound, device=device)
-            # ens_loss, ens_err = testEnsemble(net, test_loader, bound, device=device, samples=samples_ensemble)
-
-            print(f"***Checkpoint results***")
-            print(f"Objective, Dataset, Sigma, pmin, LR, momentum, LR_prior, momentum_prior, kl_penalty, dropout, Obj_train, Risk_CE, Risk_01, KL, Train NLL loss, Train 01 error, Stch loss, Stch 01 error, Post mean loss, Post mean 01 error, Ens loss, Ens 01 error, 01 error prior net, perc_train, perc_prior")
-            print(f"{objective}, {name_data}, {sigma_prior :.5f}, {pmin :.5f}, {learning_rate :.5f}, {momentum :.5f}, {learning_rate_prior :.5f}, {momentum_prior :.5f}, {kl_penalty : .5f}, {dropout_prob :.5f}, {train_obj :.5f}, {risk_ce :.5f}, {risk_01 :.5f}, {kl :.5f}, {loss_ce_train :.5f}, {loss_01_train :.5f}, {stch_loss :.5f}, {stch_err :.5f}, {post_loss :.5f}, {post_err :.5f}, {ens_loss :.5f}, {ens_err :.5f}, {errornet0 :.5f}, {perc_train :.5f}, {perc_prior :.5f}")
-
+    # risk_01, kl, stch_err = pointTestCertificate(net, bound, val_bound, test_loader, val_bound_one_batch)
     train_obj, risk_ce, risk_01, kl, loss_ce_train, loss_01_train = computeRiskCertificates(net, toolarge, bound, device=device,
     lambda_var=lambda_var, train_loader=val_bound, whole_train=val_bound_one_batch)
 
     stch_loss, stch_err = testStochastic(net, test_loader, bound, device=device)
     # post_loss, post_err = testPosteriorMean(net, test_loader, bound, device=device)
     # ens_loss, ens_err = testEnsemble(net, test_loader, bound, device=device, samples=samples_ensemble)
-    post_loss, post_err = -1, -1
-    ens_loss, ens_err = -1, -1
 
     print(f"***Final results***")
-    print(f"Objective, Dataset, Sigma, pmin, LR, momentum, LR_prior, momentum_prior, kl_penalty, dropout, Obj_train, Risk_CE, Risk_01, KL, Train NLL loss, Train 01 error, Stch loss, Stch 01 error, Post mean loss, Post mean 01 error, Ens loss, Ens 01 error, 01 error prior net, perc_train, perc_prior")
-    print(f"{objective}, {name_data}, {sigma_prior :.5f}, {pmin :.5f}, {learning_rate :.5f}, {momentum :.5f}, {learning_rate_prior :.5f}, {momentum_prior :.5f}, {kl_penalty : .5f}, {dropout_prob :.5f}, {train_obj :.5f}, {risk_ce :.5f}, {risk_01 :.5f}, {kl :.5f}, {loss_ce_train :.5f}, {loss_01_train :.5f}, {stch_loss :.5f}, {stch_err :.5f}, {post_loss :.5f}, {post_err :.5f}, {ens_loss :.5f}, {ens_err :.5f}, {errornet0 :.5f}, {perc_train :.5f}, {perc_prior :.5f}")
+    print(f"Objective, LR, Risk_01, KL, Stch 01 error, 01 error prior net")
+    print(f"{objective}, {learning_rate}, {risk_01:.4f}, {kl:.4f}, {stch_err:.4f}, {errornet0:.4f}")
+    # print(f"Objective, Dataset, Sigma, pmin, LR, momentum, LR_prior, momentum_prior, kl_penalty, dropout, Obj_train, Risk_CE, Risk_01, KL, Train NLL loss, Train 01 error, Stch loss, Stch 01 error, Post mean loss, Post mean 01 error, Ens loss, Ens 01 error, 01 error prior net, perc_train, perc_prior")
+    # print(f"{objective}, {name_data}, {sigma_prior :.5f}, {pmin :.5f}, {learning_rate :.5f}, {momentum :.5f}, {learning_rate_prior :.5f}, {momentum_prior :.5f}, {kl_penalty : .5f}, {dropout_prob :.5f}, {train_obj :.5f}, {risk_ce :.5f}, {risk_01 :.5f}, {kl :.5f}, {loss_ce_train :.5f}, {loss_01_train :.5f}, {stch_loss :.5f}, {stch_err :.5f}, {post_loss :.5f}, {post_err :.5f}, {ens_loss :.5f}, {ens_err :.5f}, {errornet0 :.5f}, {perc_train :.5f}, {perc_prior :.5f}")
 
 
 def count_parameters(model): 

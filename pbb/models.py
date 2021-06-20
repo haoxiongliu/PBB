@@ -1264,12 +1264,14 @@ def trainPNNet(net, optimizer, pbobj, epoch, train_loader, lambda_var=None, opti
         net.zero_grad()
         bound, kl, _, loss, err = pbobj.train_obj(
             net, data, target, lambda_var=lambda_var, clamping=clamping)
-        bound.backward(retain_graph=True)
+        bound.backward()
         optimizer.step()
         avgbound += bound.item()
         avgkl += kl
         avgloss += loss.item()
         avgerr += err
+        # jf
+
 
         if pbobj.objective == 'flamb':
             # for flamb we also need to optimise the lambda variable
@@ -1457,9 +1459,20 @@ def computeRiskCertificates(net, toolarge, pbobj, device='cuda', lambda_var=None
                 net, lambda_var=lambda_var, clamping=True, data_loader=train_loader)
         else:
             # a bit hacky, we load the whole dataset to compute the bound
-            for data, target in whole_train:
+            for data, target in tqdm(whole_train, position=0):
                 data, target = data.to(device), target.to(device)
                 train_obj, kl, loss_ce_train, err_01_train, risk_ce, risk_01 = pbobj.compute_final_stats_risk(
                     net, lambda_var=lambda_var, clamping=True, input=data, target=target)
+
+    return train_obj, risk_ce, risk_01, kl, loss_ce_train, err_01_train
+
+
+def pointTestCertificate(net, pbobj, train_loader, test_loader, whole_train, device='cuda'):
+    with torch.no_grad():
+        # a bit hacky, we load the whole dataset to compute the bound
+        for data, target in tqdm(whole_train, position=0):
+            data, target = data.to(device), target.to(device)
+            train_obj, kl, loss_ce_train, err_01_train, risk_ce, risk_01 = pbobj.compute_final_stats_risk(
+                net, input=data, target=target)
 
     return train_obj, risk_ce, risk_01, kl, loss_ce_train, err_01_train
