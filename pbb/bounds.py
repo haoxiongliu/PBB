@@ -174,16 +174,23 @@ class PBBobj():
 
     def compute_final_stats_risk(self, net, input=None, target=None, data_loader=None, clamping=True, lambda_var=None):
         # compute all final stats and risk certificates
+        net.eval()
+        kl = net.compute_kl()
+        pkl = net.compute_kl_point()
         if self.objective is 'fpoint':
-            kl = net.compute_kl_point()
             if data_loader:
                 empirical_risk_ce, empirical_risk_01 = \
                     self.empirical_risk_sample(net, input, target, batches=True, clamping=True, data_loader=data_loader)
             else:
                 empirical_risk_ce, empirical_risk_01 = \
                     self.empirical_risk_sample(net, input, target, batches=False, clamping=True)
+            train_obj = self.bound(empirical_risk_ce, pkl, lambda_var)
+
+            risk_ce = inv_kl(empirical_risk_ce, (pkl + np.log((2 *
+                                                                 np.sqrt(self.train_size))/self.delta_test))/self.train_size)
+            risk_01 = inv_kl(empirical_risk_01, (pkl + np.log((2 *
+                                                                 np.sqrt(self.train_size))/self.delta_test))/self.train_size)
         else:
-            kl = net.compute_kl()
             if data_loader:
                 error_ce, error_01 = self.mcsampling(net, input, target, batches=True,
                                                      clamping=True, data_loader=data_loader)
@@ -195,13 +202,13 @@ class PBBobj():
             empirical_risk_01 = inv_kl(
                 error_01, np.log(2/self.delta_test)/self.mc_samples)
 
-        train_obj = self.bound(empirical_risk_ce, kl, lambda_var)
+            train_obj = self.bound(empirical_risk_ce, kl, lambda_var)
 
-        risk_ce = inv_kl(empirical_risk_ce, (kl + np.log((2 *
-                                                             np.sqrt(self.train_size))/self.delta_test))/self.train_size)
-        risk_01 = inv_kl(empirical_risk_01, (kl + np.log((2 *
-                                                             np.sqrt(self.train_size))/self.delta_test))/self.train_size)
-        return train_obj, kl/self.train_size, empirical_risk_ce, empirical_risk_01, risk_ce, risk_01
+            risk_ce = inv_kl(empirical_risk_ce, (kl + np.log((2 *
+                                                                 np.sqrt(self.train_size))/self.delta_test))/self.train_size)
+            risk_01 = inv_kl(empirical_risk_01, (kl + np.log((2 *
+                                                                 np.sqrt(self.train_size))/self.delta_test))/self.train_size)
+        return train_obj, kl/self.train_size, pkl/self.train_size, empirical_risk_ce, empirical_risk_01, risk_ce, risk_01
 
 
 def inv_kl(qs, ks):

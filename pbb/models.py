@@ -114,7 +114,7 @@ class Gaussian(nn.Module):
 
     def sample(self):
         # Return a sample from the Gaussian distribution
-        epsilon = torch.randn(self.sigma.size(), requires_grad=False).to(self.device)
+        epsilon = torch.randn(self.sigma.size()).to(self.device)
         return self.mu + self.sigma * epsilon
 
 
@@ -133,10 +133,11 @@ class Gaussian(nn.Module):
         return kl_div
 
     def compute_kl_point(self, other, x):   # x is the sampled weight/bias
-        b1 = torch.pow(self.sigma, 2)
-        b0 = torch.pow(other.sigma, 2)
-        term3 = 0.5*(torch.log(torch.div(b0, b1)))
-        return (torch.div(torch.pow(x-other.mu, 2), 2*b0) - torch.div(torch.pow(x-self.mu, 2), 2*b1) + term3).sum()
+        with torch.no_grad():
+            b1 = torch.pow(self.sigma, 2)
+            b0 = torch.pow(other.sigma, 2)
+            term3 = 0.5*(torch.log(torch.div(b0, b1)))
+            return (torch.div(torch.pow(x-other.mu, 2), 2*b0) - torch.div(torch.pow(x-self.mu, 2), 2*b1) + term3).sum()
 
 
 class Laplace(nn.Module):
@@ -325,7 +326,7 @@ class ProbLinear(nn.Module):
             bias_mu_init.clone(), bias_rho_init.clone(), device=device, fixed=True)
 
         self.kl_div = 0
-        self.kl_point = 0
+        self.kl_point = None
 
     def sample(self):
         weight = self.weight.sample()
@@ -347,9 +348,9 @@ class ProbLinear(nn.Module):
             # sum of the KL computed for weights and biases
             self.kl_div = self.weight.compute_kl(self.weight_prior) + \
                 self.bias.compute_kl(self.bias_prior)
-            self.kl_point = self.weight.compute_kl_point(
-                self.weight_prior, weight) + \
-                self.bias.compute_kl_point(self.bias_prior, bias)
+        self.kl_point = self.weight.compute_kl_point(
+            self.weight_prior, weight) + \
+            self.bias.compute_kl_point(self.bias_prior, bias)
 
         return F.linear(input, weight, bias)
 
@@ -440,7 +441,7 @@ class ProbConv2d(nn.Module):
             bias_mu_init.clone(), bias_rho_init.clone(), device=device, fixed=True)
 
         self.kl_div = 0
-        self.kl_point = 0
+        self.kl_point = None
 
     def sample(self):
         weight = self.weight.sample()
@@ -462,8 +463,8 @@ class ProbConv2d(nn.Module):
             # sum of the KL computed for weights and biases
             self.kl_div = self.weight.compute_kl(
                 self.weight_prior) + self.bias.compute_kl(self.bias_prior)
-            self.kl_point = self.weight.compute_kl_point(
-                self.weight_prior, weight) + self.bias.compute_kl_point(self.bias_prior, bias)
+        self.kl_point = self.weight.compute_kl_point(
+            self.weight_prior, weight) + self.bias.compute_kl_point(self.bias_prior, bias)
 
         return F.conv2d(input, weight, bias, self.stride, self.padding, self.dilation, self.groups)
 
@@ -1455,16 +1456,16 @@ def computeRiskCertificates(net, toolarge, pbobj, device='cuda', lambda_var=None
     net.eval()
     with torch.no_grad():
         if toolarge:
-            train_obj, kl, loss_ce_train, err_01_train, risk_ce, risk_01 = pbobj.compute_final_stats_risk(
+            train_obj, kl, pkl, loss_ce_train, err_01_train, risk_ce, risk_01 = pbobj.compute_final_stats_risk(
                 net, lambda_var=lambda_var, clamping=True, data_loader=train_loader)
         else:
             # a bit hacky, we load the whole dataset to compute the bound
             for data, target in tqdm(whole_train, position=0):
                 data, target = data.to(device), target.to(device)
-                train_obj, kl, loss_ce_train, err_01_train, risk_ce, risk_01 = pbobj.compute_final_stats_risk(
+                train_obj, kl, pkl, loss_ce_train, err_01_train, risk_ce, risk_01 = pbobj.compute_final_stats_risk(
                     net, lambda_var=lambda_var, clamping=True, input=data, target=target)
 
-    return train_obj, risk_ce, risk_01, kl, loss_ce_train, err_01_train
+    return train_obj, risk_ce, risk_01, kl, pkl, loss_ce_train, err_01_train
 
 
 def pointTestCertificate(net, pbobj, train_loader, test_loader, whole_train, device='cuda'):
